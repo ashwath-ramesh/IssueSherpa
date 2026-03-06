@@ -78,7 +78,12 @@ func (c *client) FetchAllIssues(repos []string) ([]models.Issue, error) {
 }
 
 func (c *client) fetchIssues(repo string, state string) ([]models.Issue, error) {
-	path := fmt.Sprintf("/repos/%s/issues?state=%s&per_page=100", url.PathEscape(repo), state)
+	owner, repoName, err := splitRepository(repo)
+	if err != nil {
+		return nil, err
+	}
+
+	path := fmt.Sprintf("/repos/%s/%s/issues?state=%s&per_page=100", url.PathEscape(owner), url.PathEscape(repoName), state)
 	rawMessages, err := c.getAllPages(path)
 	if err != nil {
 		return nil, err
@@ -96,6 +101,14 @@ func (c *client) fetchIssues(repo string, state string) ([]models.Issue, error) 
 		issues = append(issues, normalizeGitHubIssue(repo, issue))
 	}
 	return issues, nil
+}
+
+func splitRepository(repo string) (string, string, error) {
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("invalid repository format: %q (expected owner/repo)", repo)
+	}
+	return parts[0], parts[1], nil
 }
 
 func normalizeGitHubIssue(repo string, raw issueResponse) models.Issue {
