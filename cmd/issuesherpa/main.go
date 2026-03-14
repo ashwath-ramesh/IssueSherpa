@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,17 +34,15 @@ func main() {
 	githubToken := readEnvValue("GITHUB_TOKEN")
 	githubRepos := readCSVEnv("GITHUB_REPOS")
 
-	if !offline && len(activeProviders(sentryToken, sentryOrg, sentryProjects, gitlabToken, gitlabProjects, githubToken, githubRepos)) == 0 {
-		fmt.Fprintln(os.Stderr, "Missing source configuration. Configure at least one provider:")
-		fmt.Fprintln(os.Stderr, "  Sentry: SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECTS")
-		fmt.Fprintln(os.Stderr, "  GitLab: GITLAB_TOKEN, GITLAB_PROJECTS")
-		fmt.Fprintln(os.Stderr, "  GitHub: GITHUB_TOKEN, GITHUB_REPOS")
-		fmt.Fprintln(os.Stderr, "Set the required environment variables above and rerun")
+	providers := activeProviders(sentryToken, sentryOrg, sentryProjects, gitlabToken, gitlabProjects, githubToken, githubRepos)
+	if !offline && len(providers) == 0 {
+		logEvent("error", "config.providers_missing", "required", "sentry|gitlab|github")
+		logEvent("error", "config.providers_hint", "sentry", "SENTRY_AUTH_TOKEN,SENTRY_ORG,SENTRY_PROJECTS", "gitlab", "GITLAB_TOKEN,GITLAB_PROJECTS", "github", "GITHUB_TOKEN,GITHUB_REPOS")
 		os.Exit(1)
 	}
 
 	if !offline {
-		fmt.Fprintf(os.Stderr, "Enabled providers: %s\n", formatProviders(sentryToken, sentryOrg, sentryProjects, gitlabToken, gitlabProjects, githubToken, githubRepos))
+		logEvent("info", "providers.configured", "providers", strings.Join(providers, ","), "count", strconv.Itoa(len(providers)))
 	}
 
 	svc, err := core.New(core.Config{
@@ -56,7 +55,7 @@ func main() {
 		GitHubRepos:    githubRepos,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+		logEvent("error", "database.open_failed", "error", sanitizeTerminalText(err.Error()))
 		os.Exit(1)
 	}
 	defer svc.Close()
@@ -67,29 +66,29 @@ func main() {
 	if offline {
 		issues, err = svc.LoadCached(context.Background())
 		if errors.Is(err, core.ErrNoCachedData) {
-			fmt.Fprintln(os.Stderr, "No cached data. Run without --offline first to sync.")
+			logEvent("warn", "cache.not_found", "action", "run_without_offline_first")
 			os.Exit(1)
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading cache: %v\n", err)
+			logEvent("error", "cache.load_failed", "error", sanitizeTerminalText(err.Error()))
 			os.Exit(1)
 		}
-		fmt.Fprintln(os.Stderr, "Loading from cache...")
-		fmt.Fprintf(os.Stderr, "Loaded %d issues from cache.\n", len(issues))
+		logEvent("info", "cache.load_start")
+		logEvent("info", "cache.load_complete", "issues", strconv.Itoa(len(issues)))
 		printCacheStatus(cacheInfo)
 	} else {
 		issues, err = svc.Sync(context.Background())
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error fetching issues: %v\n", err)
+			logEvent("error", "sync.fetch_failed", "error", sanitizeTerminalText(err.Error()))
 			os.Exit(1)
 		}
 		cacheInfo, _ = svc.CacheInfo(context.Background())
 		for _, warning := range svc.Warnings() {
-			fmt.Fprintf(os.Stderr, "Warning [%s]: %s\n", sanitizeTerminalText(warning.Source), sanitizeTerminalText(warning.Message))
+			logEvent("warn", "sync.warning", "source", sanitizeTerminalText(warning.Source), "message", sanitizeTerminalText(warning.Message))
 		}
 
 		logIssueDownloadSummary(issues, sentryProjects, gitlabProjects, githubRepos)
-		fmt.Fprintf(os.Stderr, "Ready. %d issues synced.\n", len(issues))
+		logEvent("info", "sync.complete", "issues", strconv.Itoa(len(issues)))
 	}
 
 	if len(args) > 0 {
@@ -101,7 +100,7 @@ func main() {
 
 	p := tea.NewProgram(newModel(issues, cacheInfo, offline, svc), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
+		logEvent("error", "tui.run_failed", "error", sanitizeTerminalText(err.Error()))
 		os.Exit(1)
 	}
 }
@@ -157,7 +156,7 @@ func readEnvValue(name string) string {
 		return ""
 	}
 	if isPlaceholderValue(value) {
-		fmt.Fprintf(os.Stderr, "Ignoring %s: placeholder value detected\n", name)
+		logEvent("warn", "env.placeholder_ignored", "variable", name)
 		return ""
 	}
 	return value
@@ -169,14 +168,14 @@ func readCSVEnv(name string) []string {
 		return nil
 	}
 	if isPlaceholderValue(raw) {
-		fmt.Fprintf(os.Stderr, "Ignoring %s: placeholder value detected\n", name)
+		logEvent("warn", "env.placeholder_ignored", "variable", name)
 		return nil
 	}
 	values := parseCSVList(raw)
 	out := make([]string, 0, len(values))
 	for _, v := range values {
 		if isPlaceholderValue(v) {
-			fmt.Fprintf(os.Stderr, "Ignoring %s entry %q: placeholder value\n", name, v)
+			logEvent("warn", "env.placeholder_entry_ignored", "variable", name, "value", strings.TrimSpace(v))
 			continue
 		}
 		out = append(out, v)
@@ -209,7 +208,7 @@ func isRepeatedCharValue(value string) bool {
 
 func logIssueDownloadSummary(issues []Issue, sentryProjects, gitlabProjects, githubRepos []string) {
 	if len(issues) == 0 {
-		fmt.Fprintln(os.Stderr, "Warning: no issues were downloaded.")
+		logEvent("warn", "sync.empty")
 		return
 	}
 
@@ -241,15 +240,15 @@ func logIssueDownloadSummary(issues []Issue, sentryProjects, gitlabProjects, git
 		"gitlab": gitlabProjects,
 	}
 
-	fmt.Fprintln(os.Stderr, "\nDownload check (per configured project/repo):")
+	logEvent("info", "download_check.start")
 	for _, source := range []string{"sentry", "github", "gitlab"} {
 		stat := sourceStats[source]
-		fmt.Fprintf(os.Stderr, "- %s: %d total issues\n", source, stat.total)
+		logEvent("info", "download_check.source", "source", source, "total", strconv.Itoa(stat.total))
 		if len(configured[source]) == 0 {
 			continue
 		}
 		for _, project := range configured[source] {
-			fmt.Fprintf(os.Stderr, "  %s: %d issues\n", project, stat.bySrc[project])
+			logEvent("info", "download_check.project", "source", source, "project", project, "issues", strconv.Itoa(stat.bySrc[project]))
 		}
 	}
 }
@@ -259,8 +258,20 @@ func printCacheStatus(info core.CacheInfo) {
 		return
 	}
 	age := time.Since(info.LastSyncAt).Round(time.Minute)
-	fmt.Fprintf(os.Stderr, "Cache last synced: %s (%s ago)\n", info.LastSyncAt.Local().Format(time.RFC1123), age)
+	logEvent("info", "cache.status", "last_sync", info.LastSyncAt.UTC().Format(time.RFC3339), "age", age.String())
 	if info.Stale {
-		fmt.Fprintln(os.Stderr, "Warning: cache is older than 24 hours.")
+		logEvent("warn", "cache.stale", "threshold", "24h")
 	}
+}
+
+func logEvent(level string, event string, fields ...string) {
+	parts := make([]string, 0, len(fields)/2)
+	for i := 0; i+1 < len(fields); i += 2 {
+		parts = append(parts, fmt.Sprintf("%s=%q", fields[i], sanitizeTerminalText(fields[i+1])))
+	}
+	if len(parts) > 0 {
+		fmt.Fprintf(os.Stderr, "[%s] [%s] %s %s\n", time.Now().UTC().Format(time.RFC3339), strings.ToUpper(level), event, strings.Join(parts, " "))
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[%s] [%s] %s\n", time.Now().UTC().Format(time.RFC3339), strings.ToUpper(level), event)
 }
