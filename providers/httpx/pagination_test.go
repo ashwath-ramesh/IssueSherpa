@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -74,5 +76,68 @@ func TestFetchAllPagesEnforcesMaxPages(t *testing.T) {
 	}, "/loop")
 	if err == nil {
 		t.Fatal("expected pagination limit error")
+	}
+}
+
+func TestFetchAllPagesRejectsCrossOriginNextLink(t *testing.T) {
+	var leaked atomic.Int32
+
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaked.Add(1)
+		t.Fatalf("unexpected attacker request with auth header %q", r.Header.Get("Authorization"))
+	}))
+	defer attacker.Close()
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Link", `<`+attacker.URL+`/steal>; rel="next"`)
+		_, _ = w.Write([]byte(`[{"id":"1"}]`))
+	}))
+	defer server.Close()
+
+	_, err := FetchAllPages(context.Background(), PaginationConfig{
+		Client:  server.Client(),
+		BaseURL: server.URL,
+		Headers: map[string]string{
+			"Authorization": "Bearer secret-token",
+		},
+		NextPage:   func(link string) string { return NextPageURL(link) },
+		Limiter:    NewRateLimiter(0),
+		MaxPages:   5,
+		MaxRetries: 1,
+	}, "/page1")
+	if err == nil {
+		t.Fatal("expected cross-origin pagination error")
+	}
+	if !strings.Contains(err.Error(), "different origin") {
+		t.Fatalf("expected origin error, got %v", err)
+	}
+	if leaked.Load() != 0 {
+		t.Fatalf("expected no attacker requests, got %d", leaked.Load())
+	}
+}
+
+func TestFetchAllPagesPreservesBasePathPrefixOnFirstRequest(t *testing.T) {
+	var gotPath string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`[{"id":"1"}]`))
+	}))
+	defer server.Close()
+
+	_, err := FetchAllPages(context.Background(), PaginationConfig{
+		Client:     server.Client(),
+		BaseURL:    server.URL + "/api/v4",
+		NextPage:   func(link string) string { return NextPageURL(link) },
+		Limiter:    NewRateLimiter(0),
+		MaxPages:   5,
+		MaxRetries: 1,
+	}, "/projects/foo/issues")
+	if err != nil {
+		t.Fatalf("fetch all pages: %v", err)
+	}
+	if gotPath != "/api/v4/projects/foo/issues" {
+		t.Fatalf("expected prefixed api path, got %q", gotPath)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -89,8 +90,12 @@ func FetchAllPages(ctx context.Context, cfg PaginationConfig, path string) ([]js
 		cfg.RetryBackoff = DefaultRetryBackoff
 	}
 
+	currentURL, err := initialPageURL(cfg.BaseURL, path)
+	if err != nil {
+		return nil, err
+	}
+
 	var all []json.RawMessage
-	currentURL := cfg.BaseURL + path
 	pageCount := 0
 
 	for currentURL != "" {
@@ -109,7 +114,10 @@ func FetchAllPages(ctx context.Context, cfg PaginationConfig, path string) ([]js
 			return nil, err
 		}
 		all = append(all, page...)
-		currentURL = cfg.NextPage(headers.Get("Link"))
+		currentURL, err = resolvePageURL(cfg.BaseURL, currentURL, cfg.NextPage(headers.Get("Link")))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return all, nil
@@ -197,6 +205,68 @@ func fetchPage(ctx context.Context, cfg PaginationConfig, url string) ([]byte, h
 	}
 
 	return nil, nil, lastErr
+}
+
+func resolvePageURL(baseURL, currentURL, next string) (string, error) {
+	if strings.TrimSpace(next) == "" {
+		return "", nil
+	}
+
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse base url: %w", err)
+	}
+	current, err := url.Parse(currentURL)
+	if err != nil {
+		return "", fmt.Errorf("parse current url: %w", err)
+	}
+	ref, err := url.Parse(next)
+	if err != nil {
+		return "", fmt.Errorf("parse pagination url: %w", err)
+	}
+
+	resolved := current.ResolveReference(ref)
+	if !sameOrigin(base, resolved) {
+		return "", fmt.Errorf("refusing pagination redirect to different origin: %s", resolved.Redacted())
+	}
+	return resolved.String(), nil
+}
+
+func initialPageURL(baseURL, path string) (string, error) {
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse base url: %w", err)
+	}
+	ref, err := url.Parse(path)
+	if err != nil {
+		return "", fmt.Errorf("parse initial page url: %w", err)
+	}
+	if ref.IsAbs() {
+		if !sameOrigin(base, ref) {
+			return "", fmt.Errorf("refusing initial request to different origin: %s", ref.Redacted())
+		}
+		return ref.String(), nil
+	}
+
+	full := *base
+	basePath := strings.TrimRight(base.Path, "/")
+	refPath := strings.TrimLeft(ref.Path, "/")
+	switch {
+	case basePath == "":
+		full.Path = "/" + refPath
+	case refPath == "":
+		full.Path = basePath
+	default:
+		full.Path = basePath + "/" + refPath
+	}
+	full.RawPath = ""
+	full.RawQuery = ref.RawQuery
+	full.Fragment = ""
+	return full.String(), nil
+}
+
+func sameOrigin(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
 }
 
 func shouldRetry(statusCode int) bool {

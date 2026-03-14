@@ -26,9 +26,20 @@ type CacheInfo struct {
 const staleAfter = 24 * time.Hour
 
 func NewStore(path string) (*Store, error) {
-	if dir := filepath.Dir(path); dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, fmt.Errorf("create db dir: %w", err)
+	if path != ":memory:" {
+		if dir := filepath.Dir(path); dir != "." {
+			created, err := ensurePrivateDir(dir)
+			if err != nil {
+				return nil, err
+			}
+			if created {
+				if err := os.Chmod(dir, 0o700); err != nil {
+					return nil, fmt.Errorf("chmod db dir: %w", err)
+				}
+			}
+		}
+		if err := ensurePrivateFile(path); err != nil {
+			return nil, err
 		}
 	}
 
@@ -75,6 +86,32 @@ func NewStore(path string) (*Store, error) {
 	}
 
 	return &Store{db: db}, nil
+}
+
+func ensurePrivateDir(path string) (bool, error) {
+	if _, err := os.Stat(path); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("stat db dir: %w", err)
+	}
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return false, fmt.Errorf("create db dir: %w", err)
+	}
+	return true, nil
+}
+
+func ensurePrivateFile(path string) error {
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("create db file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close db file: %w", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("chmod db file: %w", err)
+	}
+	return nil
 }
 
 func ensureColumn(db *sql.DB, table string, column string) error {
