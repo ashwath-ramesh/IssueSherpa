@@ -146,9 +146,7 @@ func NextPageURL(linkHeader string, qualifiers ...string) string {
 func fetchPage(ctx context.Context, cfg PaginationConfig, url string) ([]byte, http.Header, error) {
 	var lastErr error
 	for attempt := 0; attempt <= cfg.MaxRetries; attempt++ {
-		if err := cfg.Limiter.Wait(ctx); err != nil && err != context.Canceled && err != context.DeadlineExceeded {
-			return nil, nil, err
-		} else if err != nil {
+		if err := cfg.Limiter.Wait(ctx); err != nil {
 			return nil, nil, err
 		}
 
