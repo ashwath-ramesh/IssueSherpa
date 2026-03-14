@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"os"
@@ -83,6 +84,7 @@ type layoutInfo struct {
 }
 
 type model struct {
+	service          *core.Service
 	issues           []Issue
 	active           []Issue
 	visible          []Issue
@@ -109,10 +111,13 @@ type model struct {
 	searchDraft      string
 	searchBefore     string
 	zoomPreview      bool
+	refreshing       bool
+	refreshStatus    string
 }
 
-func newModel(issues []Issue, cacheInfo core.CacheInfo, offline bool) *model {
+func newModel(issues []Issue, cacheInfo core.CacheInfo, offline bool, service *core.Service) *model {
 	m := &model{
+		service:          service,
 		issues:           issues,
 		projects:         core.CollectProjects(issues),
 		sources:          core.CollectSources(issues),
@@ -136,6 +141,22 @@ func (m *model) Init() tea.Cmd {
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case syncResultMsg:
+		m.refreshing = false
+		if msg.err != nil {
+			m.refreshStatus = fmt.Sprintf("refresh failed: %v", msg.err)
+			return m, nil
+		}
+		m.issues = msg.issues
+		m.cacheInfo = msg.cacheInfo
+		m.syncData(msg.preferredID)
+		refreshStamp := m.humanRefreshTime()
+		if len(msg.warnings) == 0 {
+			m.refreshStatus = fmt.Sprintf("refreshed %s", refreshStamp)
+		} else {
+			m.refreshStatus = fmt.Sprintf("%s %s", describeSyncWarnings(msg.warnings), refreshStamp)
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -164,6 +185,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, openIssueURL(issue.URL)
 				}
 				return m, nil
+			case "ctrl+r":
+				return m.startRefresh(m.selectedID())
 			default:
 				return m, nil
 			}
@@ -206,6 +229,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sortDesc = !m.sortDesc
 			m.syncData(m.selectedID())
 			return m, nil
+		case "ctrl+r":
+			return m.startRefresh(m.selectedID())
 		case "enter":
 			if len(m.visible) > 0 {
 				m.restoreCursorPos = m.cursor
@@ -256,6 +281,65 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+type syncResultMsg struct {
+	issues      []Issue
+	cacheInfo   core.CacheInfo
+	preferredID string
+	err         error
+	warnings    []core.Warning
+}
+
+func (m *model) startRefresh(preferredID string) (tea.Model, tea.Cmd) {
+	if m.refreshing {
+		return m, nil
+	}
+	m.refreshing = true
+	m.refreshStatus = "refreshing..."
+	return m, m.refreshIssues(preferredID)
+}
+
+func (m *model) refreshIssues(preferredID string) tea.Cmd {
+	offline := m.offline
+	svc := m.service
+	fallbackCache := m.cacheInfo
+
+	return func() tea.Msg {
+		if offline {
+			return syncResultMsg{
+				preferredID: preferredID,
+				err:         fmt.Errorf("cannot refresh while --offline is enabled"),
+			}
+		}
+		if svc == nil {
+			return syncResultMsg{
+				preferredID: preferredID,
+				err:         fmt.Errorf("refresh unavailable"),
+			}
+		}
+
+		issues, err := svc.Sync(context.Background())
+		cacheInfo, cacheErr := svc.CacheInfo(context.Background())
+		if cacheErr != nil {
+			cacheInfo = fallbackCache
+		}
+
+		return syncResultMsg{
+			issues:      issues,
+			cacheInfo:   cacheInfo,
+			preferredID: preferredID,
+			err:         err,
+			warnings:    svc.Warnings(),
+		}
+	}
+}
+
+func describeSyncWarnings(warnings []core.Warning) string {
+	if len(warnings) == 1 {
+		return fmt.Sprintf("refreshed with warning: %s", sanitizeTerminalText(warnings[0].Message))
+	}
+	return fmt.Sprintf("refreshed with %d warnings", len(warnings))
 }
 
 func (m *model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -327,6 +411,7 @@ func (m *model) viewHeader() string {
 	)
 
 	searchLine := fmt.Sprintf("search[/] %s", m.searchLabel())
+	refreshLine := fmt.Sprintf("refresh: %s", m.refreshLine())
 
 	lines := []string{
 		title + "  " + ashStyle.Render(mode) + "  " + ashStyle.Render(cache),
@@ -334,6 +419,7 @@ func (m *model) viewHeader() string {
 		scopeLine,
 		ashStyle.Render(filterLine),
 		ashStyle.Render(searchLine),
+		ashStyle.Render(refreshLine),
 	}
 	return strings.Join(lines, "\n")
 }
@@ -430,13 +516,9 @@ func (m *model) viewDetailPanel(width, height int) string {
 func (m *model) viewFooter(width int) string {
 	var lines []string
 	if m.zoomPreview {
-		lines = append(lines, ashStyle.Render("keys enter/esc dossier  1/2/3 scope  p project  v provider  s sort  r reverse  / search  q quit"))
+		lines = append(lines, ashStyle.Render("keys enter/esc dossier  1/2/3 scope  p project  v provider  s sort  r reverse  ctrl+r refresh  / search  q quit"))
 	} else {
-		lines = append(lines, ashStyle.Render("keys j/k move  pgup/pgdown jump  enter dossier  1/2/3 scope  p project  v provider  s sort  r reverse  / search  q quit"))
-	}
-
-	if width >= 96 {
-		lines = append(lines, ashStyle.Render("principles: queue first, actions visible, keyboard primary, color optional, CLI still available"))
+		lines = append(lines, ashStyle.Render("keys j/k move  pgup/pgdown jump  enter dossier  1/2/3 scope  p project  v provider  s sort  r reverse  ctrl+r refresh  / search  q quit"))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -576,6 +658,25 @@ func (m *model) cacheLabel() string {
 		bits = append(bits, "offline")
 	}
 	return strings.Join(bits, " ") + "]"
+}
+
+func (m *model) refreshLine() string {
+	if m.refreshing {
+		return "refreshing..."
+	}
+	if m.refreshStatus == "" {
+		return "ready"
+	}
+	return m.refreshStatus
+}
+
+func (m *model) humanRefreshTime() string {
+	if !m.cacheInfo.HasSync || m.cacheInfo.LastSyncAt.IsZero() {
+		return "(no sync timestamp)"
+	}
+
+	age := time.Since(m.cacheInfo.LastSyncAt).Round(time.Minute)
+	return fmt.Sprintf("(at %s, %s ago)", m.cacheInfo.LastSyncAt.Local().Format("Jan 02 15:04"), age)
 }
 
 func (m *model) searchLabel() string {

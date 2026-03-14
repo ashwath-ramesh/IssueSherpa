@@ -15,7 +15,7 @@ DB_PATH?=$(if $(ISSUESHERPA_DB_PATH),$(ISSUESHERPA_DB_PATH),$(DEFAULT_DB_PATH))
 
 .ONESHELL:
 
-.PHONY: build test run tui list open resolved leaderboard offline list-offline clean
+.PHONY: build test test-race check run tui list open resolved leaderboard offline list-offline clean
 
 build: $(BINARY)
 
@@ -25,6 +25,11 @@ $(BINARY): $(GO_SOURCES) $(GO_MODULE_FILES)
 
 test:
 	go test ./...
+
+test-race:
+	go test -race ./...
+
+check: test-race
 
 define run_with_env
 	@if [ -f $(ENV_FILE) ]; then \

@@ -167,22 +167,114 @@ func matchesSearch(issue models.Issue, query string) bool {
 
 func matchesTerm(issue models.Issue, term string) bool {
 	term = strings.ToLower(term)
-	candidates := []string{
-		issue.ID,
-		issue.ShortID,
-		issue.Title,
-		issue.Project.Slug,
-		issue.Project.Name,
-		issue.Reporter,
-		issue.Source,
+	candidates := []struct {
+		value      string
+		allowFuzzy bool
+	}{
+		{value: issue.ID, allowFuzzy: true},
+		{value: issue.ShortID, allowFuzzy: true},
+		{value: issue.Title, allowFuzzy: true},
+		{value: issue.Project.Slug, allowFuzzy: true},
+		{value: issue.Project.Name, allowFuzzy: true},
+		{value: issue.Reporter, allowFuzzy: true},
+		{value: issue.Source, allowFuzzy: true},
 	}
 
 	for _, candidate := range candidates {
-		if strings.Contains(strings.ToLower(candidate), term) {
+		if matchCandidate(candidate.value, term, candidate.allowFuzzy) {
 			return true
 		}
 	}
 	return false
+}
+
+func matchCandidate(candidate, term string, allowFuzzy bool) bool {
+	candidate = strings.ToLower(strings.TrimSpace(candidate))
+	if candidate == "" {
+		return false
+	}
+	if strings.Contains(candidate, term) {
+		return true
+	}
+	if !allowFuzzy || len(term) < 4 {
+		return false
+	}
+	return fuzzyCandidateMatch(candidate, term)
+}
+
+func fuzzyCandidateMatch(candidate, term string) bool {
+	for _, token := range strings.Fields(candidate) {
+		if token == "" || len(token) < 4 {
+			continue
+		}
+		limit := fuzzyDistanceLimit(len(term), len(token))
+		if limit < 0 {
+			continue
+		}
+		if levenshtein(term, token) <= limit {
+			return true
+		}
+	}
+	return false
+}
+
+func fuzzyDistanceLimit(searchLen, targetLen int) int {
+	diff := searchLen - targetLen
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > 2 {
+		return -1
+	}
+
+	if searchLen <= 5 {
+		return 1
+	}
+	return 2
+}
+
+func levenshtein(a, b string) int {
+	if a == b {
+		return 0
+	}
+
+	runesA := []rune(a)
+	runesB := []rune(b)
+	aLen := len(runesA)
+	bLen := len(runesB)
+
+	if aLen == 0 {
+		return bLen
+	}
+	if bLen == 0 {
+		return aLen
+	}
+
+	dp := make([]int, bLen+1)
+	prev := make([]int, bLen+1)
+	for j := 0; j <= bLen; j++ {
+		prev[j] = j
+	}
+
+	for i := 1; i <= aLen; i++ {
+		dp[0] = i
+		prevDiag := prev[0]
+
+		for j := 1; j <= bLen; j++ {
+			deletion := prev[j] + 1
+			insertion := dp[j-1] + 1
+			substitution := prevDiag
+			if runesA[i-1] != runesB[j-1] {
+				substitution++
+			}
+
+			dp[j] = min(deletion, min(insertion, substitution))
+			prevDiag = prev[j]
+		}
+
+		copy(prev, dp)
+	}
+	return dp[bLen]
 }
 
 func compareIssues(sortBy string, a, b models.Issue) int {
