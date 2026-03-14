@@ -1,5 +1,7 @@
 .env
 sentry-racers
 issues.db
+/bin/
 
-issuesherpa
+/issuesherpa
+/issuesherpa.exe

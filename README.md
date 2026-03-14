@@ -22,6 +22,7 @@ cp .env.example .env
 # fill in provider tokens/projects in .env
 
 make tui
+./bin/issuesherpa
 make list
 make offline
 make test
@@ -40,6 +41,13 @@ make test
 go run ./cmd/issuesherpa
 go run ./cmd/issuesherpa list
 go run ./cmd/issuesherpa --offline
-go build -o issuesherpa ./cmd/issuesherpa
-./issuesherpa leaderboard
+go build -o bin/issuesherpa ./cmd/issuesherpa
+./bin/issuesherpa leaderboard
+```
+
+### Terminal behavior
+
+```bash
+NO_COLOR=1 ./bin/issuesherpa  # force plain output in terminals without color
+CLICOLOR=0 ./bin/issuesherpa
 ```
