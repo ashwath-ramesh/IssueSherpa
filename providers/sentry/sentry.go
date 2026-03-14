@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sci-ecommerce/issuesherpa/models"
+	"github.com/sci-ecommerce/issuesherpa/providers/httpx"
 )
 
 type client struct {
@@ -20,6 +20,7 @@ type client struct {
 	org     string
 	baseURL string
 	http    *http.Client
+	limiter *httpx.RateLimiter
 }
 
 type issueResponse struct {
@@ -55,7 +56,13 @@ type assignedTo struct {
 }
 
 func NewClient(token, org string) *client {
-	return &client{token: token, org: org, baseURL: "https://sentry.io/api/0", http: &http.Client{Timeout: 30 * time.Second}}
+	return &client{
+		token:   token,
+		org:     org,
+		baseURL: "https://sentry.io/api/0",
+		http:    &http.Client{Timeout: 30 * time.Second},
+		limiter: httpx.NewRateLimiter(200 * time.Millisecond),
+	}
 }
 
 func (c *client) FetchAllIssues(ctx context.Context, projects []string) ([]models.Issue, error) {
@@ -155,56 +162,13 @@ func normalizeSentryIssue(raw issueResponse) models.Issue {
 }
 
 func (c *client) getAllPages(ctx context.Context, path string) ([]json.RawMessage, error) {
-	var all []json.RawMessage
-	currentURL := c.baseURL + path
-
-	for currentURL != "" {
-		req, err := http.NewRequestWithContext(ctx, "GET", currentURL, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+c.token)
-
-		resp, err := c.http.Do(req)
-		if err != nil {
-			return nil, err
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("read response body: %w", err)
-		}
-		if resp.StatusCode != 200 {
-			return nil, fmt.Errorf("sentry API returned %d: %s", resp.StatusCode, string(body))
-		}
-
-		var page []json.RawMessage
-		if err := json.Unmarshal(body, &page); err != nil {
-			return nil, err
-		}
-		all = append(all, page...)
-		currentURL = getNextPageURL(resp.Header.Get("Link"))
-	}
-
-	return all, nil
-}
-
-func getNextPageURL(linkHeader string) string {
-	if linkHeader == "" {
-		return ""
-	}
-	for _, part := range strings.Split(linkHeader, ",") {
-		part = strings.TrimSpace(part)
-		if strings.Contains(part, `rel="next"`) && strings.Contains(part, `results="true"`) {
-			start := strings.Index(part, "<")
-			end := strings.Index(part, ">")
-			if start >= 0 && end > start {
-				return part[start+1 : end]
-			}
-		}
-	}
-	return ""
+	return httpx.FetchAllPages(ctx, httpx.PaginationConfig{
+		Client:   c.http,
+		BaseURL:  c.baseURL,
+		Headers:  map[string]string{"Authorization": "Bearer " + c.token},
+		NextPage: func(linkHeader string) string { return httpx.NextPageURL(linkHeader, `results="true"`) },
+		Limiter:  c.limiter,
+	}, path)
 }
 
 func normalizeStatus(raw string) string {

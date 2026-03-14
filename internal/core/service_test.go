@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/sci-ecommerce/issuesherpa/models"
 )
@@ -212,6 +213,14 @@ func (failingStore) LoadIssues() ([]models.Issue, error) {
 	return nil, nil
 }
 
+func (failingStore) SaveLastSync(time.Time) error {
+	return nil
+}
+
+func (failingStore) LoadCacheInfo() (CacheInfo, error) {
+	return CacheInfo{}, nil
+}
+
 func (failingStore) Close() error {
 	return nil
 }
@@ -224,6 +233,14 @@ func (noopStore) UpsertIssues([]models.Issue) error {
 
 func (noopStore) LoadIssues() ([]models.Issue, error) {
 	return nil, nil
+}
+
+func (noopStore) SaveLastSync(time.Time) error {
+	return nil
+}
+
+func (noopStore) LoadCacheInfo() (CacheInfo, error) {
+	return CacheInfo{}, nil
 }
 
 func (noopStore) Close() error {

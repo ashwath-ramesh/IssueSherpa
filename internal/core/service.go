@@ -4,7 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/sci-ecommerce/issuesherpa/models"
 	"github.com/sci-ecommerce/issuesherpa/providers/github"
@@ -44,6 +49,8 @@ type providerFetchers struct {
 type storeBackend interface {
 	UpsertIssues([]models.Issue) error
 	LoadIssues() ([]models.Issue, error)
+	SaveLastSync(time.Time) error
+	LoadCacheInfo() (CacheInfo, error)
 	Close() error
 }
 
@@ -69,7 +76,7 @@ func New(config Config) (*Service, error) {
 func newWithFetchers(config Config, fetchers providerFetchers) (*Service, error) {
 	dbPath := config.DBPath
 	if dbPath == "" {
-		dbPath = "issues.db"
+		dbPath = defaultDBPath()
 	}
 
 	store, err := NewStore(dbPath)
@@ -113,6 +120,11 @@ func (s *Service) Sync(ctx context.Context) ([]models.Issue, error) {
 		warnings = append(warnings, Warning{
 			Source:  "cache",
 			Message: fmt.Sprintf("failed to save cache: %v", err),
+		})
+	} else if err := s.store.SaveLastSync(time.Now().UTC()); err != nil {
+		warnings = append(warnings, Warning{
+			Source:  "cache",
+			Message: fmt.Sprintf("failed to update cache metadata: %v", err),
 		})
 	}
 	s.warnings = warnings
@@ -162,6 +174,13 @@ func (s *Service) Leaderboard(ctx context.Context, filter IssueFilter) ([]Leader
 		return nil, err
 	}
 	return BuildLeaderboard(issues), nil
+}
+
+func (s *Service) CacheInfo(ctx context.Context) (CacheInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return CacheInfo{}, err
+	}
+	return s.store.LoadCacheInfo()
 }
 
 func (s *Service) fetchAllIssuesFromProviders(ctx context.Context) ([]models.Issue, []Warning, error) {
@@ -235,4 +254,30 @@ func (s *Service) fetchAllIssuesFromProviders(ctx context.Context) ([]models.Iss
 		return nil, nil, fmt.Errorf("%s: %s", errs[0].Source, errs[0].Message)
 	}
 	return all, errs, nil
+}
+
+func defaultDBPath() string {
+	if override := strings.TrimSpace(os.Getenv("ISSUESHERPA_DB_PATH")); override != "" {
+		return override
+	}
+	if dataHome := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); dataHome != "" {
+		return filepath.Join(dataHome, "issuesherpa", "issues.db")
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "issues.db"
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support", "issuesherpa", "issues.db")
+	case "windows":
+		if appData := strings.TrimSpace(os.Getenv("APPDATA")); appData != "" {
+			return filepath.Join(appData, "issuesherpa", "issues.db")
+		}
+		return filepath.Join(home, "AppData", "Roaming", "issuesherpa", "issues.db")
+	default:
+		return filepath.Join(home, ".local", "share", "issuesherpa", "issues.db")
+	}
 }

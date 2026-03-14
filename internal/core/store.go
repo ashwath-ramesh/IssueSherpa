@@ -3,7 +3,10 @@ package core
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -14,7 +17,21 @@ type Store struct {
 	db *sql.DB
 }
 
+type CacheInfo struct {
+	LastSyncAt time.Time
+	HasSync    bool
+	Stale      bool
+}
+
+const staleAfter = 24 * time.Hour
+
 func NewStore(path string) (*Store, error) {
+	if dir := filepath.Dir(path); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("create db dir: %w", err)
+		}
+	}
+
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
@@ -41,6 +58,14 @@ func NewStore(path string) (*Store, error) {
 	)`)
 	if err != nil {
 		return nil, fmt.Errorf("create table: %w", err)
+	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS metadata (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	)`)
+	if err != nil {
+		return nil, fmt.Errorf("create metadata table: %w", err)
 	}
 
 	for _, column := range []string{"source", "issue_url"} {
@@ -190,6 +215,38 @@ func (s *Store) LoadIssues() ([]models.Issue, error) {
 	}
 
 	return issues, nil
+}
+
+func (s *Store) SaveLastSync(at time.Time) error {
+	_, err := s.db.Exec(
+		`INSERT INTO metadata (key, value) VALUES ('last_sync_at', ?)
+		 ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+		at.UTC().Format(time.RFC3339),
+	)
+	return err
+}
+
+func (s *Store) LoadCacheInfo() (CacheInfo, error) {
+	var raw string
+	err := s.db.QueryRow(`SELECT value FROM metadata WHERE key = 'last_sync_at'`).Scan(&raw)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return CacheInfo{}, nil
+		}
+		return CacheInfo{}, err
+	}
+
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return CacheInfo{}, err
+	}
+
+	info := CacheInfo{
+		LastSyncAt: parsed,
+		HasSync:    true,
+		Stale:      time.Since(parsed) > staleAfter,
+	}
+	return info, nil
 }
 
 func (s *Store) Close() error {
