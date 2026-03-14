@@ -13,6 +13,8 @@ IssueSherpa is a terminal tool for viewing GitHub, GitLab, and Sentry issues in 
 
 It solves the context-switching problem of triaging work across separate tools and tabs.
 
+It is also meant to be consumable by AI agents, not just a CLI or TUI.
+
 ## 2. Quick Start
 
 ```bash
