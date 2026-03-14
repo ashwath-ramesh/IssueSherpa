@@ -1,7 +1,9 @@
 package sentry
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,19 +23,19 @@ type client struct {
 }
 
 type issueResponse struct {
-	ID        string         `json:"id"`
-	ShortID   string         `json:"shortId"`
-	Title     string         `json:"title"`
-	Status    string         `json:"status"`
-	Level     string         `json:"level"`
+	ID        string          `json:"id"`
+	ShortID   string          `json:"shortId"`
+	Title     string          `json:"title"`
+	Status    string          `json:"status"`
+	Level     string          `json:"level"`
 	Project   projectResponse `json:"project"`
-	Count     string         `json:"count"`
-	UserCount int            `json:"userCount"`
-	FirstSeen string         `json:"firstSeen"`
-	LastSeen  string         `json:"lastSeen"`
-	Metadata  metadata       `json:"metadata"`
-	Assigned  *assignedTo    `json:"assignedTo"`
-	Permalink string         `json:"permalink"`
+	Count     string          `json:"count"`
+	UserCount int             `json:"userCount"`
+	FirstSeen string          `json:"firstSeen"`
+	LastSeen  string          `json:"lastSeen"`
+	Metadata  metadata        `json:"metadata"`
+	Assigned  *assignedTo     `json:"assignedTo"`
+	Permalink string          `json:"permalink"`
 }
 
 type projectResponse struct {
@@ -56,7 +58,7 @@ func NewClient(token, org string) *client {
 	return &client{token: token, org: org, baseURL: "https://sentry.io/api/0", http: &http.Client{Timeout: 30 * time.Second}}
 }
 
-func (c *client) FetchAllIssues(projects []string) ([]models.Issue, error) {
+func (c *client) FetchAllIssues(ctx context.Context, projects []string) ([]models.Issue, error) {
 	var (
 		mu    sync.Mutex
 		all   []models.Issue
@@ -69,7 +71,7 @@ func (c *client) FetchAllIssues(projects []string) ([]models.Issue, error) {
 			wg.Add(1)
 			go func(project, status string) {
 				defer wg.Done()
-				issues, err := c.fetchIssues(project, status)
+				issues, err := c.fetchIssues(ctx, project, status)
 				if err != nil {
 					errCh <- fmt.Errorf("sentry %s %s: %w", project, status, err)
 					return
@@ -84,18 +86,22 @@ func (c *client) FetchAllIssues(projects []string) ([]models.Issue, error) {
 	wg.Wait()
 	close(errCh)
 
+	var errs []error
 	for err := range errCh {
-		return nil, err
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 
 	return all, nil
 }
 
-func (c *client) fetchIssues(project string, status string) ([]models.Issue, error) {
+func (c *client) fetchIssues(ctx context.Context, project string, status string) ([]models.Issue, error) {
 	query := fmt.Sprintf("is:%s", status)
 	path := fmt.Sprintf("/projects/%s/%s/issues/?query=%s&per_page=100", url.PathEscape(c.org), url.PathEscape(project), url.QueryEscape(query))
 
-	rawMessages, err := c.getAllPages(path)
+	rawMessages, err := c.getAllPages(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -123,10 +129,7 @@ func normalizeSentryIssue(raw issueResponse) models.Issue {
 		reporter = "System/Automated"
 	}
 
-	status := strings.ToLower(raw.Status)
-	if status == "unresolved" {
-		status = "open"
-	}
+	status := normalizeStatus(raw.Status)
 
 	assigned := (*models.AssignedTo)(nil)
 	if raw.Assigned != nil {
@@ -151,12 +154,12 @@ func normalizeSentryIssue(raw issueResponse) models.Issue {
 	}
 }
 
-func (c *client) getAllPages(path string) ([]json.RawMessage, error) {
+func (c *client) getAllPages(ctx context.Context, path string) ([]json.RawMessage, error) {
 	var all []json.RawMessage
 	currentURL := c.baseURL + path
 
 	for currentURL != "" {
-		req, err := http.NewRequest("GET", currentURL, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", currentURL, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -169,6 +172,9 @@ func (c *client) getAllPages(path string) ([]json.RawMessage, error) {
 
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("read response body: %w", err)
+		}
 		if resp.StatusCode != 200 {
 			return nil, fmt.Errorf("sentry API returned %d: %s", resp.StatusCode, string(body))
 		}
@@ -199,4 +205,15 @@ func getNextPageURL(linkHeader string) string {
 		}
 	}
 	return ""
+}
+
+func normalizeStatus(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "unresolved", "ignored", "muted", "reprocessing":
+		return "open"
+	case "resolved":
+		return "resolved"
+	default:
+		return strings.ToLower(strings.TrimSpace(raw))
+	}
 }

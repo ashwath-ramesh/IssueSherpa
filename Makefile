@@ -1,15 +1,19 @@
 BINARY=issuesherpa
-GO_SOURCES=$(wildcard *.go) $(wildcard providers/*/*.go) $(wildcard models/*.go)
+GO_SOURCES=$(shell find . -type f -name '*.go' -not -path './vendor/*' -not -path './.git/*')
+GO_MODULE_FILES=go.mod go.sum
 ENV_FILE=.env
 
 .ONESHELL:
 
-.PHONY: build run tui list open resolved leaderboard offline list-offline clean
+.PHONY: build test run tui list open resolved leaderboard offline list-offline clean
 
 build: $(BINARY)
 
-$(BINARY): $(GO_SOURCES)
-	go build -o $(BINARY) .
+$(BINARY): $(GO_SOURCES) $(GO_MODULE_FILES)
+	go build -o $(BINARY) ./cmd/issuesherpa
+
+test:
+	go test ./...
 
 define run_with_env
 	@if [ -f $(ENV_FILE) ]; then \

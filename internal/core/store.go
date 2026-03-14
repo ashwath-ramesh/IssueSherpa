@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"database/sql"
@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/sci-ecommerce/issuesherpa/models"
 )
 
 type Store struct {
@@ -36,16 +38,13 @@ func NewStore(path string) (*Store, error) {
 		assigned_to_email TEXT,
 		source TEXT DEFAULT 'sentry',
 		issue_url TEXT
-	)`) 
+	)`)
 	if err != nil {
 		return nil, fmt.Errorf("create table: %w", err)
 	}
 
-	for _, col := range []string{
-		"source",
-		"issue_url",
-	} {
-		if err := ensureColumn(db, "issues", col); err != nil {
+	for _, column := range []string{"source", "issue_url"} {
+		if err := ensureColumn(db, "issues", column); err != nil {
 			return nil, fmt.Errorf("migrate table: %w", err)
 		}
 	}
@@ -74,6 +73,9 @@ func ensureColumn(db *sql.DB, table string, column string) error {
 			return nil
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
 
 	schema := ""
 	switch column {
@@ -82,11 +84,15 @@ func ensureColumn(db *sql.DB, table string, column string) error {
 	case "issue_url":
 		schema = "issue_url TEXT"
 	}
+	if schema == "" {
+		return fmt.Errorf("unsupported column migration: %s", column)
+	}
+
 	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", table, schema))
 	return err
 }
 
-func (s *Store) UpsertIssues(issues []Issue) error {
+func (s *Store) UpsertIssues(issues []models.Issue) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -110,27 +116,29 @@ func (s *Store) UpsertIssues(issues []Issue) error {
 			assigned_to_name=excluded.assigned_to_name,
 			assigned_to_email=excluded.assigned_to_email,
 			source=excluded.source,
-            issue_url=excluded.issue_url`)
+			issue_url=excluded.issue_url`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
-	for _, i := range issues {
-		aName, aEmail := "", ""
-		if i.AssignedTo != nil {
-			aName = i.AssignedTo.Name
-			aEmail = i.AssignedTo.Email
+	for _, issue := range issues {
+		assignedName, assignedEmail := "", ""
+		if issue.AssignedTo != nil {
+			assignedName = issue.AssignedTo.Name
+			assignedEmail = issue.AssignedTo.Email
 		}
-		source := strings.TrimSpace(i.Source)
+
+		source := strings.TrimSpace(issue.Source)
 		if source == "" {
 			source = "sentry"
 		}
+
 		_, err = stmt.Exec(
-			i.ID, i.ShortID, i.Title, i.Status, i.Level,
-			i.Project.ID, i.Project.Name, i.Project.Slug,
-			i.Count, i.UserCount, i.FirstSeen, i.LastSeen,
-			i.Reporter, aName, aEmail, source, i.URL,
+			issue.ID, issue.ShortID, issue.Title, issue.Status, issue.Level,
+			issue.Project.ID, issue.Project.Name, issue.Project.Slug,
+			issue.Count, issue.UserCount, issue.FirstSeen, issue.LastSeen,
+			issue.Reporter, assignedName, assignedEmail, source, issue.URL,
 		)
 		if err != nil {
 			return err
@@ -140,7 +148,7 @@ func (s *Store) UpsertIssues(issues []Issue) error {
 	return tx.Commit()
 }
 
-func (s *Store) LoadIssues() ([]Issue, error) {
+func (s *Store) LoadIssues() ([]models.Issue, error) {
 	rows, err := s.db.Query(`SELECT
 		id, short_id, title, status, level,
 		project_id, project_name, project_slug,
@@ -154,30 +162,38 @@ func (s *Store) LoadIssues() ([]Issue, error) {
 	}
 	defer rows.Close()
 
-	var issues []Issue
+	var issues []models.Issue
 	for rows.Next() {
-		var i Issue
-		var aName, aEmail sql.NullString
+		var issue models.Issue
+		var assignedName, assignedEmail sql.NullString
 		err := rows.Scan(
-			&i.ID, &i.ShortID, &i.Title, &i.Status, &i.Level,
-			&i.Project.ID, &i.Project.Name, &i.Project.Slug,
-			&i.Count, &i.UserCount, &i.FirstSeen, &i.LastSeen,
-			&i.Reporter, &aName, &aEmail, &i.Source, &i.URL,
+			&issue.ID, &issue.ShortID, &issue.Title, &issue.Status, &issue.Level,
+			&issue.Project.ID, &issue.Project.Name, &issue.Project.Slug,
+			&issue.Count, &issue.UserCount, &issue.FirstSeen, &issue.LastSeen,
+			&issue.Reporter, &assignedName, &assignedEmail, &issue.Source, &issue.URL,
 		)
 		if err != nil {
 			return nil, err
 		}
-			i.Source = normalizeIssueSource(i.ID, i.Source)
-			if i.Source == "" {
-				i.Source = "sentry"
-			}
-		if aName.Valid && aName.String != "" {
-			i.AssignedTo = &AssignedTo{Name: aName.String, Email: aEmail.String}
+
+		issue.Source = normalizeIssueSource(issue.ID, issue.Source)
+		if issue.Source == "" {
+			issue.Source = "sentry"
 		}
-		issues = append(issues, i)
+		if assignedName.Valid && assignedName.String != "" {
+			issue.AssignedTo = &models.AssignedTo{Name: assignedName.String, Email: assignedEmail.String}
+		}
+		issues = append(issues, issue)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return issues, nil
+}
+
+func (s *Store) Close() error {
+	return s.db.Close()
 }
 
 func normalizeIssueSource(id, source string) string {
@@ -194,32 +210,4 @@ func normalizeIssueSource(id, source string) string {
 		return "sentry"
 	}
 	return "sentry"
-}
-
-func (s *Store) ReporterCache() (map[string]string, error) {
-	rows, err := s.db.Query(`SELECT id, reporter FROM issues WHERE reporter != '' AND reporter IS NOT NULL`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	cache := map[string]string{}
-	for rows.Next() {
-		var id, reporter string
-		if err := rows.Scan(&id, &reporter); err != nil {
-			return nil, err
-		}
-		cache[id] = reporter
-	}
-	return cache, nil
-}
-
-func (s *Store) HasData() bool {
-	var count int
-	s.db.QueryRow("SELECT COUNT(*) FROM issues").Scan(&count)
-	return count > 0
-}
-
-func (s *Store) Close() {
-	s.db.Close()
 }

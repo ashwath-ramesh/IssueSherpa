@@ -1,7 +1,9 @@
 package github
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,7 +44,7 @@ func NewClient(token string) *client {
 	return &client{token: token, baseURL: "https://api.github.com", http: &http.Client{Timeout: 30 * time.Second}}
 }
 
-func (c *client) FetchAllIssues(repos []string) ([]models.Issue, error) {
+func (c *client) FetchAllIssues(ctx context.Context, repos []string) ([]models.Issue, error) {
 	var (
 		mu    sync.Mutex
 		all   []models.Issue
@@ -55,7 +57,7 @@ func (c *client) FetchAllIssues(repos []string) ([]models.Issue, error) {
 			wg.Add(1)
 			go func(repo, state string) {
 				defer wg.Done()
-				issues, err := c.fetchIssues(repo, state)
+				issues, err := c.fetchIssues(ctx, repo, state)
 				if err != nil {
 					errCh <- fmt.Errorf("github %s %s: %w", repo, state, err)
 					return
@@ -70,21 +72,25 @@ func (c *client) FetchAllIssues(repos []string) ([]models.Issue, error) {
 	wg.Wait()
 	close(errCh)
 
+	var errs []error
 	for err := range errCh {
-		return nil, err
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 
 	return all, nil
 }
 
-func (c *client) fetchIssues(repo string, state string) ([]models.Issue, error) {
+func (c *client) fetchIssues(ctx context.Context, repo string, state string) ([]models.Issue, error) {
 	owner, repoName, err := splitRepository(repo)
 	if err != nil {
 		return nil, err
 	}
 
 	path := fmt.Sprintf("/repos/%s/%s/issues?state=%s&per_page=100", url.PathEscape(owner), url.PathEscape(repoName), state)
-	rawMessages, err := c.getAllPages(path)
+	rawMessages, err := c.getAllPages(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -147,12 +153,12 @@ func normalizeGitHubIssue(repo string, raw issueResponse) models.Issue {
 	}
 }
 
-func (c *client) getAllPages(path string) ([]json.RawMessage, error) {
+func (c *client) getAllPages(ctx context.Context, path string) ([]json.RawMessage, error) {
 	var all []json.RawMessage
 	currentURL := c.baseURL + path
 
 	for currentURL != "" {
-		req, err := http.NewRequest("GET", currentURL, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", currentURL, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -166,6 +172,9 @@ func (c *client) getAllPages(path string) ([]json.RawMessage, error) {
 
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("read response body: %w", err)
+		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return nil, fmt.Errorf("github API returned %d: %s", resp.StatusCode, string(body))
 		}

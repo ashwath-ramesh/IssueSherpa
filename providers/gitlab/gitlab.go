@@ -1,7 +1,9 @@
 package gitlab
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,8 +30,8 @@ type issueResponse struct {
 	UpdatedAt string `json:"updated_at"`
 	WebURL    string `json:"web_url"`
 	Author    struct {
-		Name  string `json:"name"`
-		Email string `json:"email"`
+		Name     string `json:"name"`
+		Email    string `json:"email"`
 		Username string `json:"username"`
 	} `json:"author"`
 	Assignee *struct {
@@ -42,7 +44,7 @@ func NewClient(token string) *client {
 	return &client{token: token, baseURL: "https://gitlab.com/api/v4", http: &http.Client{Timeout: 30 * time.Second}}
 }
 
-func (c *client) FetchAllIssues(projects []string) ([]models.Issue, error) {
+func (c *client) FetchAllIssues(ctx context.Context, projects []string) ([]models.Issue, error) {
 	var (
 		mu    sync.Mutex
 		all   []models.Issue
@@ -55,7 +57,7 @@ func (c *client) FetchAllIssues(projects []string) ([]models.Issue, error) {
 			wg.Add(1)
 			go func(project, state string) {
 				defer wg.Done()
-				issues, err := c.fetchIssues(project, state)
+				issues, err := c.fetchIssues(ctx, project, state)
 				if err != nil {
 					errCh <- fmt.Errorf("gitlab %s %s: %w", project, state, err)
 					return
@@ -70,16 +72,20 @@ func (c *client) FetchAllIssues(projects []string) ([]models.Issue, error) {
 	wg.Wait()
 	close(errCh)
 
+	var errs []error
 	for err := range errCh {
-		return nil, err
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 
 	return all, nil
 }
 
-func (c *client) fetchIssues(project string, state string) ([]models.Issue, error) {
+func (c *client) fetchIssues(ctx context.Context, project string, state string) ([]models.Issue, error) {
 	path := fmt.Sprintf("/projects/%s/issues?state=%s&per_page=100", url.PathEscape(project), state)
-	rawMessages, err := c.getAllPages(path)
+	rawMessages, err := c.getAllPages(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -136,12 +142,12 @@ func normalizeStatus(raw string) string {
 	}
 }
 
-func (c *client) getAllPages(path string) ([]json.RawMessage, error) {
+func (c *client) getAllPages(ctx context.Context, path string) ([]json.RawMessage, error) {
 	var all []json.RawMessage
 	currentURL := c.baseURL + path
 
 	for currentURL != "" {
-		req, err := http.NewRequest("GET", currentURL, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", currentURL, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -154,6 +160,9 @@ func (c *client) getAllPages(path string) ([]json.RawMessage, error) {
 
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("read response body: %w", err)
+		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return nil, fmt.Errorf("gitlab API returned %d: %s", resp.StatusCode, string(body))
 		}

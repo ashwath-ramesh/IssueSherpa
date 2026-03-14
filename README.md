@@ -3,14 +3,21 @@
 ## Quick start
 
 ```bash
-export SENTRY_AUTH_TOKEN=...
-export SENTRY_ORG=...
-export SENTRY_PROJECTS=...
-export GITLAB_TOKEN=...
-export GITLAB_PROJECTS=...
-export GITHUB_TOKEN=...
-export GITHUB_REPOS=...
+cp .env.example .env
+# fill in provider tokens/projects in .env
+
 make tui
 make list
 make offline
+make test
+```
+
+## Direct commands
+
+```bash
+go run ./cmd/issuesherpa
+go run ./cmd/issuesherpa list
+go run ./cmd/issuesherpa --offline
+go build -o issuesherpa ./cmd/issuesherpa
+./issuesherpa leaderboard
 ```
