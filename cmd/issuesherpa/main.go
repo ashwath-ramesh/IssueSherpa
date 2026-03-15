@@ -93,7 +93,14 @@ func main() {
 
 	if len(args) > 0 {
 		if err := runCLI(args, issues); err != nil {
-			os.Exit(1)
+			exitCode := 1
+			if cliErr, ok := err.(*cliError); ok {
+				exitCode = cliErr.ExitCode
+				if exitCode <= 0 {
+					exitCode = 1
+				}
+			}
+			os.Exit(exitCode)
 		}
 		return
 	}
