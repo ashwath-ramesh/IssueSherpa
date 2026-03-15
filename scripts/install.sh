@@ -24,7 +24,12 @@ if [[ -n "$REQUESTED_VERSION" ]]; then
   TAG="${REQUESTED_VERSION#v}"
 else
   echo "Fetching latest release..."
-  TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')
+  if ! RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null); then
+    echo "Error: no published GitHub release found for ${REPO}." >&2
+    echo "Publish a tagged release first, or install from source with \`go build ./cmd/issuesherpa\`." >&2
+    exit 1
+  fi
+  TAG=$(printf '%s' "$RELEASE_JSON" | grep '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')
 fi
 
 if [[ -z "$TAG" ]]; then
