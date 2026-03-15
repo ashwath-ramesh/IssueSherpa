@@ -10,6 +10,16 @@ import (
 	"github.com/sci-ecommerce/issuesherpa/models"
 )
 
+func TestDefaultDBPathHonorsOverride(t *testing.T) {
+	override := filepath.Join(t.TempDir(), "custom.db")
+	t.Setenv("ISSUESHERPA_DB_PATH", override)
+
+	got := defaultDBPath()
+	if got != override {
+		t.Fatalf("defaultDBPath = %q, want %q", got, override)
+	}
+}
+
 func TestLoadCachedWithoutDataReturnsSentinel(t *testing.T) {
 	svc, err := newWithFetchers(Config{
 		DBPath: filepath.Join(t.TempDir(), "issues.db"),

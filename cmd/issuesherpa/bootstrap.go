@@ -63,7 +63,8 @@ func runInit() error {
 func printInitHelp() {
 	fmt.Print(`issuesherpa init
 
-Create a user config template at os.UserConfigDir()/issuesherpa/config.toml.
+Create a user config template at XDG_CONFIG_HOME/issuesherpa/config.toml
+or ~/.config/issuesherpa/config.toml.
 Existing config files are preserved.
 `)
 }

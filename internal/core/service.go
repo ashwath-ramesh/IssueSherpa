@@ -5,12 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/sci-ecommerce/issuesherpa/internal/apppaths"
 	"github.com/sci-ecommerce/issuesherpa/models"
 	"github.com/sci-ecommerce/issuesherpa/providers/github"
 	"github.com/sci-ecommerce/issuesherpa/providers/gitlab"
@@ -260,24 +259,9 @@ func defaultDBPath() string {
 	if override := strings.TrimSpace(os.Getenv("ISSUESHERPA_DB_PATH")); override != "" {
 		return override
 	}
-	if dataHome := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); dataHome != "" {
-		return filepath.Join(dataHome, "issuesherpa", "issues.db")
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	path, err := apppaths.ResolveDBPath()
+	if err != nil || strings.TrimSpace(path) == "" {
 		return "issues.db"
 	}
-
-	switch runtime.GOOS {
-	case "darwin":
-		return filepath.Join(home, "Library", "Application Support", "issuesherpa", "issues.db")
-	case "windows":
-		if appData := strings.TrimSpace(os.Getenv("APPDATA")); appData != "" {
-			return filepath.Join(appData, "issuesherpa", "issues.db")
-		}
-		return filepath.Join(home, "AppData", "Roaming", "issuesherpa", "issues.db")
-	default:
-		return filepath.Join(home, ".local", "share", "issuesherpa", "issues.db")
-	}
+	return path
 }

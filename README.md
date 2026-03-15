@@ -60,8 +60,9 @@ make test
 make check       # includes -race
 ```
 
-- Cache: stored in OS user data dir by default; override with `ISSUESHERPA_DB_PATH=/path/to/issues.db`.
-- Config: stored at `os.UserConfigDir()/issuesherpa/config.toml`.
+- Cache: stored at `XDG_DATA_HOME/issuesherpa/issues.db` or `~/.local/share/issuesherpa/issues.db`; override with `ISSUESHERPA_DB_PATH=/path/to/issues.db`.
+- Config: stored at `XDG_CONFIG_HOME/issuesherpa/config.toml` or `~/.config/issuesherpa/config.toml`.
+- Existing macOS `~/Library/Application Support/issuesherpa/...` config and DB paths are still honored if present.
 - `--offline` uses cache only and reports staleness.
 - `NO_COLOR=1` / `CLICOLOR=0` disable ANSI coloring.
 - In TUI, search includes typo-tolerant fallback (for example, `lables` can match `labels`).

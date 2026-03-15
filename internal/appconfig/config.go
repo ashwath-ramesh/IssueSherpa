@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/sci-ecommerce/issuesherpa/internal/apppaths"
 )
 
 type Config struct {
@@ -53,15 +54,15 @@ repos = []
 `
 
 func DefaultPath() (string, error) {
-	root, err := os.UserConfigDir()
+	path, err := apppaths.ConfigPath()
 	if err != nil {
 		return "", fmt.Errorf("resolve config dir: %w", err)
 	}
-	return filepath.Join(root, "issuesherpa", "config.toml"), nil
+	return path, nil
 }
 
 func LoadDefault() (Config, string, error) {
-	path, err := DefaultPath()
+	path, err := apppaths.ResolveConfigPath()
 	if err != nil {
 		return Config{}, "", err
 	}
@@ -91,6 +92,10 @@ func InitDefault() (string, bool, error) {
 	path, err := DefaultPath()
 	if err != nil {
 		return "", false, err
+	}
+	resolvedPath, err := apppaths.ResolveConfigPath()
+	if err == nil && resolvedPath != path {
+		return resolvedPath, false, nil
 	}
 	created, err := Init(path)
 	return path, created, err

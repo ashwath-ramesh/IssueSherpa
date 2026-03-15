@@ -3,6 +3,7 @@ package appconfig
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -91,5 +92,49 @@ func TestInitCreatesTemplateAndDoesNotOverwrite(t *testing.T) {
 	}
 	if string(data) != "custom = true\n" {
 		t.Fatalf("expected config to be preserved, got %q", string(data))
+	}
+}
+
+func TestDefaultPathUsesXDGConfigHome(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+
+	path, err := DefaultPath()
+	if err != nil {
+		t.Fatalf("default path: %v", err)
+	}
+
+	want := filepath.Join(root, "issuesherpa", "config.toml")
+	if path != want {
+		t.Fatalf("path = %q, want %q", path, want)
+	}
+}
+
+func TestInitDefaultRespectsLegacyConfigOnDarwin(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("legacy config path only applies on darwin")
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	legacy := filepath.Join(home, "Library", "Application Support", "issuesherpa", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o700); err != nil {
+		t.Fatalf("mkdir legacy dir: %v", err)
+	}
+	if err := os.WriteFile(legacy, []byte("custom = true\n"), 0o600); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+
+	path, created, err := InitDefault()
+	if err != nil {
+		t.Fatalf("init default: %v", err)
+	}
+	if created {
+		t.Fatal("expected legacy config to prevent new file creation")
+	}
+	if path != legacy {
+		t.Fatalf("path = %q, want legacy %q", path, legacy)
 	}
 }
