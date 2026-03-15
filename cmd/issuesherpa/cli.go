@@ -1036,6 +1036,7 @@ func printCLIHelp() {
 
 Usage:
   issuesherpa                              Launch TUI
+  issuesherpa init                         Create a user config template
   issuesherpa list                         List all issues
   issuesherpa list --open                  List open issues only
   issuesherpa list --resolved              List resolved issues only
@@ -1043,6 +1044,8 @@ Usage:
   issuesherpa show <ISSUE-ID>              Show issue details
   issuesherpa leaderboard                  Show reporter leaderboard
   issuesherpa leaderboard --project <slug>  Leaderboard for a project
+  issuesherpa version                      Show build version
+  issuesherpa --version                    Show build version
   issuesherpa json                         Compatibility alias for list JSON output
 
 Machine interface:

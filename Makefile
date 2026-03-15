@@ -3,6 +3,10 @@ BINARY=$(BINARY_DIR)/issuesherpa
 GO_SOURCES=$(shell find . -type f -name '*.go' -not -path './vendor/*' -not -path './.git/*')
 GO_MODULE_FILES=go.mod go.sum
 ENV_FILE=.env
+VERSION?=dev
+COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+BUILD_DATE?=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+LDFLAGS=-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildDate=$(BUILD_DATE)
 OS_NAME:=$(shell uname -s)
 ifeq ($(OS_NAME),Darwin)
 DEFAULT_DB_PATH:=$(HOME)/Library/Application Support/issuesherpa/issues.db
@@ -21,7 +25,7 @@ build: $(BINARY)
 
 $(BINARY): $(GO_SOURCES) $(GO_MODULE_FILES)
 	mkdir -p $(BINARY_DIR)
-	go build -o $(BINARY) ./cmd/issuesherpa
+	go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/issuesherpa
 
 test:
 	go test ./...

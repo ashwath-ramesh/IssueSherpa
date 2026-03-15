@@ -3,8 +3,10 @@
 ## Table of Contents
 
 1. [Overview](#1-overview)
-2. [Quick Start](#2-quick-start)
-3. [Useful Commands](#3-useful-commands)
+2. [Install](#2-install)
+3. [Quick Start](#3-quick-start)
+4. [Commands and Environment](#4-commands-and-environment)
+5. [Release](#5-release)
 
 ## 1. Overview
 
@@ -14,29 +16,40 @@ It solves the context-switching problem of triaging work across separate tools a
 
 It is also meant to be consumable by AI agents, not just a CLI or TUI.
 
-## 2. Quick Start
+## 2. Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ashwath-ramesh/IssueSherpa/master/scripts/install.sh | bash
+```
+
+Pin a version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ashwath-ramesh/IssueSherpa/master/scripts/install.sh | VERSION=v0.1.0 bash
+```
+
+## 3. Quick Start
+
+```bash
+issuesherpa init
+# edit the generated config.toml
+```
 
 ### TUI
 
 ```bash
-cp .env.example .env
-# fill in provider tokens/projects in .env
-make tui        # builds and runs TUI
-./bin/issuesherpa
+issuesherpa
 ```
 
 ### CLI
 
 ```bash
-cp .env.example .env
-# fill in provider tokens/projects in .env
-
-go run ./cmd/issuesherpa list
-go run ./cmd/issuesherpa --offline list
-go run ./cmd/issuesherpa leaderboard
+issuesherpa list
+issuesherpa --offline list
+issuesherpa leaderboard
 ```
 
-## 3. Useful Commands
+## 4. Commands and Environment
 
 ```bash
 go run ./cmd/issuesherpa
@@ -47,9 +60,12 @@ make test
 make check       # includes -race
 ```
 
-### Runtime notes
-
 - Cache: stored in OS user data dir by default; override with `ISSUESHERPA_DB_PATH=/path/to/issues.db`.
+- Config: stored at `os.UserConfigDir()/issuesherpa/config.toml`.
 - `--offline` uses cache only and reports staleness.
 - `NO_COLOR=1` / `CLICOLOR=0` disable ANSI coloring.
 - In TUI, search includes typo-tolerant fallback (for example, `lables` can match `labels`).
+
+## 5. Release
+
+See [docs/releasing.md](docs/releasing.md).

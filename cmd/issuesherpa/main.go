@@ -10,11 +10,19 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/sci-ecommerce/issuesherpa/internal/appconfig"
 	"github.com/sci-ecommerce/issuesherpa/internal/core"
 )
 
 func main() {
 	args := os.Args[1:]
+
+	if handled, exitCode := handleBootstrapCommand(args); handled {
+		if exitCode != 0 {
+			os.Exit(exitCode)
+		}
+		return
+	}
 
 	if len(args) > 0 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
 		printCLIHelp()
@@ -24,20 +32,37 @@ func main() {
 	offline := hasFlag(args, "--offline")
 	args = stripFlags(args, "--offline")
 
-	sentryToken := readEnvValue("SENTRY_AUTH_TOKEN")
-	sentryOrg := readEnvValue("SENTRY_ORG")
-	sentryProjects := readCSVEnv("SENTRY_PROJECTS")
+	runtimeConfig, err := loadRuntimeConfig()
+	if err != nil {
+		logEvent("error", "config.load_failed", "error", sanitizeTerminalText(err.Error()))
+		os.Exit(1)
+	}
 
-	gitlabToken := readEnvValue("GITLAB_TOKEN")
-	gitlabProjects := readCSVEnv("GITLAB_PROJECTS")
-
-	githubToken := readEnvValue("GITHUB_TOKEN")
-	githubRepos := readCSVEnv("GITHUB_REPOS")
-
-	providers := activeProviders(sentryToken, sentryOrg, sentryProjects, gitlabToken, gitlabProjects, githubToken, githubRepos)
+	providers := activeProviders(
+		runtimeConfig.SentryToken,
+		runtimeConfig.SentryOrg,
+		runtimeConfig.SentryProjects,
+		runtimeConfig.GitLabToken,
+		runtimeConfig.GitLabProjects,
+		runtimeConfig.GitHubToken,
+		runtimeConfig.GitHubRepos,
+	)
 	if !offline && len(providers) == 0 {
 		logEvent("error", "config.providers_missing", "required", "sentry|gitlab|github")
-		logEvent("error", "config.providers_hint", "sentry", "SENTRY_AUTH_TOKEN,SENTRY_ORG,SENTRY_PROJECTS", "gitlab", "GITLAB_TOKEN,GITLAB_PROJECTS", "github", "GITHUB_TOKEN,GITHUB_REPOS")
+		configPath, pathErr := appconfig.DefaultPath()
+		if pathErr == nil {
+			logEvent(
+				"error",
+				"config.providers_hint",
+				"command", "issuesherpa init",
+				"config", sanitizeTerminalText(configPath),
+				"sentry", "SENTRY_AUTH_TOKEN,SENTRY_ORG,SENTRY_PROJECTS",
+				"gitlab", "GITLAB_TOKEN,GITLAB_PROJECTS",
+				"github", "GITHUB_TOKEN,GITHUB_REPOS",
+			)
+		} else {
+			logEvent("error", "config.providers_hint", "command", "issuesherpa init", "sentry", "SENTRY_AUTH_TOKEN,SENTRY_ORG,SENTRY_PROJECTS", "gitlab", "GITLAB_TOKEN,GITLAB_PROJECTS", "github", "GITHUB_TOKEN,GITHUB_REPOS")
+		}
 		os.Exit(1)
 	}
 
@@ -45,15 +70,7 @@ func main() {
 		logEvent("info", "providers.configured", "providers", strings.Join(providers, ","), "count", strconv.Itoa(len(providers)))
 	}
 
-	svc, err := core.New(core.Config{
-		SentryToken:    sentryToken,
-		SentryOrg:      sentryOrg,
-		SentryProjects: sentryProjects,
-		GitLabToken:    gitlabToken,
-		GitLabProjects: gitlabProjects,
-		GitHubToken:    githubToken,
-		GitHubRepos:    githubRepos,
-	})
+	svc, err := core.New(runtimeConfig)
 	if err != nil {
 		logEvent("error", "database.open_failed", "error", sanitizeTerminalText(err.Error()))
 		os.Exit(1)
@@ -87,7 +104,7 @@ func main() {
 			logEvent("warn", "sync.warning", "source", sanitizeTerminalText(warning.Source), "message", sanitizeTerminalText(warning.Message))
 		}
 
-		logIssueDownloadSummary(issues, sentryProjects, gitlabProjects, githubRepos)
+		logIssueDownloadSummary(issues, runtimeConfig.SentryProjects, runtimeConfig.GitLabProjects, runtimeConfig.GitHubRepos)
 		logEvent("info", "sync.complete", "issues", strconv.Itoa(len(issues)))
 	}
 
