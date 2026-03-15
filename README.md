@@ -17,12 +17,26 @@ It is also meant to be consumable by AI agents, not just a CLI or TUI.
 
 ## 2. Quick Start
 
+### TUI
+
 ```bash
 cp .env.example .env
 # fill in provider tokens/projects in .env
 
 make tui
 ./bin/issuesherpa
+```
+
+### CLI
+
+```bash
+cp .env.example .env
+# fill in provider tokens/projects in .env
+
+go run ./cmd/issuesherpa
+go run ./cmd/issuesherpa list
+go run ./cmd/issuesherpa --offline
+go run ./cmd/issuesherpa leaderboard
 make list
 make offline
 make test
