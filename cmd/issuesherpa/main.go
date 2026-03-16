@@ -24,8 +24,10 @@ func main() {
 		return
 	}
 
-	if len(args) > 0 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
-		printCLIHelp()
+	if handled, exitCode := handlePreRuntimeCommand(args); handled {
+		if exitCode != 0 {
+			os.Exit(exitCode)
+		}
 		return
 	}
 
@@ -110,14 +112,7 @@ func main() {
 
 	if len(args) > 0 {
 		if err := runCLI(args, issues); err != nil {
-			exitCode := 1
-			if cliErr, ok := err.(*cliError); ok {
-				exitCode = cliErr.ExitCode
-				if exitCode <= 0 {
-					exitCode = 1
-				}
-			}
-			os.Exit(exitCode)
+			os.Exit(cliExitCode(err))
 		}
 		return
 	}
@@ -184,6 +179,20 @@ func readEnvValue(name string) string {
 		return ""
 	}
 	return value
+}
+
+func cliExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	exitCode := 1
+	if cliErr, ok := err.(*cliError); ok {
+		exitCode = cliErr.ExitCode
+		if exitCode <= 0 {
+			exitCode = 1
+		}
+	}
+	return exitCode
 }
 
 func readCSVEnv(name string) []string {

@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/ashwath-ramesh/IssueSherpa/master/s
 Pin a version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ashwath-ramesh/IssueSherpa/master/scripts/install.sh | VERSION=v0.1.0 bash
+curl -fsSL https://raw.githubusercontent.com/ashwath-ramesh/IssueSherpa/master/scripts/install.sh | VERSION=v0.1.2 bash
 ```
 
 ## 3. Quick Start
